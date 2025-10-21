@@ -1,0 +1,35 @@
+# Claude configuration
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data files (add specific patterns as needed)
+*.parquet
+*.vcf
+*.vcf.gz
+*.tbi
+*.bam
+*.cram
+*.crai
+
+# Output files
+plots/
+*.png
+*.pdf
+*.log
