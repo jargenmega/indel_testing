@@ -264,5 +264,78 @@ def main():
                         else:
                             print(f"      -> {alt_allele} (SNV)")
 
+    # Show positions with multiple indels
+    print("\n" + "=" * 80)
+    print("POSITIONS WITH MULTIPLE INDELS (10 EXAMPLES):")
+    print("=" * 80)
+
+    multi_indel_positions = []
+
+    # Search through all positions for those with multiple indels
+    for pos_key, lines in mixed_position_lines.items():
+        for line in lines:
+            fields = line.split('\t')
+            if len(fields) >= 5:
+                ref = fields[3]
+                alt = fields[4]
+
+                if ',' in alt:
+                    # Count indels in this multi-allelic site
+                    alt_list = alt.split(',')
+                    indel_count = 0
+                    indel_alleles = []
+
+                    for alt_allele in alt_list:
+                        if alt_allele != '.' and len(ref) != len(alt_allele):
+                            indel_count += 1
+                            indel_alleles.append(alt_allele)
+
+                    # If multiple indels at this position, save it
+                    if indel_count >= 2:
+                        chrom, pos = pos_key
+                        multi_indel_positions.append({
+                            'chrom': chrom,
+                            'pos': pos,
+                            'ref': ref,
+                            'alt': alt,
+                            'indel_alleles': indel_alleles,
+                            'filter': fields[6] if len(fields) > 6 else '.',
+                            'line': line
+                        })
+
+                        if len(multi_indel_positions) >= 10:
+                            break
+
+        if len(multi_indel_positions) >= 10:
+            break
+
+    # Display the examples
+    if multi_indel_positions:
+        print(f"\nFound {len(multi_indel_positions)} positions with multiple indels")
+        print("Showing first 10:\n")
+
+        for i, pos_info in enumerate(multi_indel_positions[:10], 1):
+            print(f"Example {i}: {pos_info['chrom']}:{pos_info['pos']}")
+            print(f"  REF: {pos_info['ref']}")
+            print(f"  ALT: {pos_info['alt']}")
+            print(f"  FILTER: {pos_info['filter']}")
+
+            # Show each indel allele with details
+            alt_list = pos_info['alt'].split(',')
+            for alt_allele in alt_list:
+                if alt_allele != '.':
+                    if len(pos_info['ref']) != len(alt_allele):
+                        if len(alt_allele) > len(pos_info['ref']):
+                            indel_type = f"insertion (+{len(alt_allele) - len(pos_info['ref'])}bp)"
+                        else:
+                            indel_type = f"deletion (-{len(pos_info['ref']) - len(alt_allele)}bp)"
+                        print(f"    -> {alt_allele} (INDEL: {indel_type})")
+                    else:
+                        print(f"    -> {alt_allele} (SNV)")
+
+            print()  # Empty line between examples
+    else:
+        print("No positions with multiple indels found in the first 10,000 variants")
+
 if __name__ == "__main__":
     main()
