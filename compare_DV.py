@@ -237,19 +237,61 @@ def main():
     print("\nProcessing complete!")
     print("\n=== RESULTS ===")
     print("Note: Counts are of ALT alleles and do not take into account allele depth")
+    print("Note: Percentages use Team B calls as denominator to measure Team B accuracy")
+    print("Note: 'in DV' means position found in DeepVariant calls, but false because no allele match found in DV")
     print("-" * 60)
-    print(f"False Positives (Team somatic, DV germline): {false_positives_count}")
-    print(f"True Negatives (Both germline): {true_negative_count}")
+
+    # Calculate totals for percentage calculations
+    total_false_negatives = false_negatives_pos_in_DV + false_negatives_pos_not_in_DV
+    total_true_positives = true_positives_pos_in_DV + true_positives_pos_not_in_DV
+
+    # Total Team somatic and germline calls
+    # These are used as denominators to measure Team B's accuracy
+    # - For FP%: out of all Team somatic calls, how many were wrong?
+    # - For TN%: out of all Team germline calls, how many were correct?
+    total_team_somatic = false_positives_count + total_true_positives
+    total_team_germline = true_negative_count + total_false_negatives
+    total_team_calls = total_team_somatic + total_team_germline
+
+    # Print with counts and percentages
+    print(f"False Positives (Team somatic, DV germline): {false_positives_count}", end="")
+    if total_team_somatic > 0:
+        print(f" ({false_positives_count/total_team_somatic*100:.1f}% of Team somatic)", end="")
+    print()
+
+    print(f"True Negatives (Both germline): {true_negative_count}", end="")
+    if total_team_germline > 0:
+        print(f" ({true_negative_count/total_team_germline*100:.1f}% of Team germline)", end="")
+    print()
+
     print(f"False Negatives in DV (Team germline, DV not): {false_negatives_pos_in_DV}")
     print(f"False Negatives not in DV: {false_negatives_pos_not_in_DV}")
     print(f"True Positives in DV (Both not germline): {true_positives_pos_in_DV}")
     print(f"True Positives not in DV: {true_positives_pos_not_in_DV}")
 
-    total_false_negatives = false_negatives_pos_in_DV + false_negatives_pos_not_in_DV
-    total_true_positives = true_positives_pos_in_DV + true_positives_pos_not_in_DV
+    print(f"\nTotal False Negatives: {total_false_negatives}", end="")
+    if total_team_germline > 0:
+        print(f" ({total_false_negatives/total_team_germline*100:.1f}% of Team germline)", end="")
+    print()
 
-    print(f"\nTotal False Negatives: {total_false_negatives}")
-    print(f"Total True Positives: {total_true_positives}")
+    print(f"Total True Positives: {total_true_positives}", end="")
+    if total_team_somatic > 0:
+        print(f" ({total_true_positives/total_team_somatic*100:.1f}% of Team somatic)", end="")
+    print()
+
+    # Overall accuracy metrics
+    if total_team_calls > 0:
+        correct = true_negative_count + total_true_positives
+        print(f"\n--- OVERALL METRICS ---")
+        print(f"Total Team ALT calls analyzed: {total_team_calls:,}")
+        print(f"Team somatic calls: {total_team_somatic:,} ({total_team_somatic/total_team_calls*100:.1f}%)")
+        print(f"Team germline calls: {total_team_germline:,} ({total_team_germline/total_team_calls*100:.1f}%)")
+        print(f"Agreement with DV: {correct:,}/{total_team_calls:,} ({correct/total_team_calls*100:.1f}%)")
+
+        if total_team_somatic > 0:
+            print(f"Somatic precision: {total_true_positives/total_team_somatic*100:.1f}%")
+        if total_team_germline > 0:
+            print(f"Germline precision: {true_negative_count/total_team_germline*100:.1f}%")
 
     # Save registers (use same timestamp as log)
     if false_positive_register:
