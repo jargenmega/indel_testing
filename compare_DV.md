@@ -42,7 +42,8 @@ This document describes the process for comparing germline indels between two va
 python vcf_to_parquet_indels.py \
     --input /home/ubuntu/data/teamb_indel-caller/deep_variant/GTEx-sample1.vcf.gz \
     --output /home/ubuntu/data/teamb_indel-caller/deep_variant/GTEx-sample1.indels.parquet \
-    --bed /home/ubuntu/data/reference/beds/GRCh38_difficult_comp.bed.gz
+    --bed /home/ubuntu/data/reference/beds/GRCh38_difficult_comp.bed.gz \
+    --coding-bed /home/ubuntu/data/reference/beds/GRCh38_main3_cds.bed.gz
 ```
 
 #### Processing Results
@@ -195,7 +196,28 @@ false_negative_register_df initiate empty - chrom, pos, ref, alt
          - else error
 - save the registers
 - print out final results for counters
-            
+
+#### Rationale for Denominators
+
+**For False Positives (FP):**
+- Denominator: Total Team somatic calls (FP + TP)
+- Shows: What % of Team B's somatic calls were incorrectly classified (actually germline per DV)
+
+**For True Negatives (TN):**
+- Denominator: Total Team germline calls (TN + FN)
+- Shows: What % of Team B's germline calls were correctly identified
+
+**For False Negatives (FN):**
+- Denominator: Total Team germline calls
+- Shows: What % of Team B's germline calls were not found in DV
+
+**For True Positives (TP):**
+- Denominator: Total Team somatic calls
+- Shows: What % of Team B's somatic calls were correctly identified
+
+The percentages measure **Team B's accuracy** using Team B's own classifications as the baseline. This helps evaluate:
+- **Somatic precision**: How accurate are Team B's somatic calls?
+- **Germline precision**: How accurate are Team B's germline calls?
 
 ### Step 3: Check if any Indels Called Somatic By Our Pipeline are Called Germline By DV
 

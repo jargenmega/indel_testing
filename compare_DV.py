@@ -161,16 +161,59 @@ def main():
         print(f"  Overlapping: {len(team_pos_in_dv):,}")
         print(f"  Team-only: {len(team_pos_not_in_dv):,}")
 
-        # Count positions not in DV (vectorized approach)
-        # Filter for ALT first (cheaper), then check positions
-        team_alts = team_chrom[team_chrom['allele_type'] == 'ALT']
-        team_alts_not_in_dv = team_alts[team_alts['pos'].isin(team_pos_not_in_dv)]
-        status_counts = team_alts_not_in_dv['status'].value_counts()
+        # Process positions not in DV (using same algorithm pattern as in DV)
+        # These are positions where Team B calls an indel but DeepVariant doesn't call anything
+        # - GERMLINE calls here are false negatives (Team thinks germline, DV doesn't call)
+        # - SOMATIC calls here are true positives (both agree not germline)
+        # We collect false negatives for analysis but just count true positives (less problematic)
+        for pos in team_pos_not_in_dv:
+            # Get all Team B data at this position
+            team_pos_all = team_chrom[team_chrom['pos'] == pos]
 
-        false_negatives_pos_not_in_DV += status_counts.get('GERMLINE', 0)
-        true_positives_pos_not_in_DV += status_counts.get('SOMATIC', 0)
+            # Get REF
+            ref_rows = team_pos_all[team_pos_all['allele_type'] == 'REF']
+            if len(ref_rows) == 1:
+                ref_seq = ref_rows.iloc[0]['allele_seq']
+            else:
+                raise ValueError(f"Expected 1 REF but found {len(ref_rows)} for {chrom}:{pos}")
 
-        # Process overlapping positions
+            # Get Team B ALTs
+            team_alts = team_pos_all[(team_pos_all['allele_type'] == 'ALT')]
+
+            # Check if multi-allelic
+            has_multiple_alts = len(team_alts) > 1
+
+            # Process each Team B ALT
+            for _, team_alt in team_alts.iterrows():
+                alt_seq = team_alt['allele_seq']
+                team_status = team_alt['status']
+
+                # Apply conversion if multi-indel allelic resulting in complex REF/ALT
+                if has_multiple_alts:
+                    converted_ref, converted_alt = convert_to_single_indel_format(ref_seq, alt_seq)
+                else:
+                    converted_ref, converted_alt = ref_seq, alt_seq
+
+                # Categorize (position not in DV means DV doesn't call it)
+                if team_status == 'GERMLINE':
+                    false_negatives_pos_not_in_DV += 1
+                    false_negative_register.append({
+                        'chrom': chrom,
+                        'pos': pos,
+                        'ref': converted_ref,
+                        'alt': converted_alt,
+                        'pos_in_DV': False
+                    })
+                elif team_status == 'SOMATIC':
+                    true_positives_pos_not_in_DV += 1
+
+        # Process overlapping positions (positions called by both Team B and DeepVariant)
+        # Here we check if the specific alleles match between Team B and DV
+        # - Team GERMLINE + DV match = true negative (both agree germline)
+        # - Team GERMLINE + no DV match = false negative (Team germline, DV doesn't match)
+        # - Team SOMATIC + DV match = false positive (Team somatic, DV germline)
+        # - Team SOMATIC + no DV match = true positive (both agree not germline)
+        # We collect false positives and false negatives for analysis
         for pos in team_pos_in_dv:
             # Get all Team B data at this position
             team_pos_all = team_chrom[team_chrom['pos'] == pos]
@@ -219,7 +262,8 @@ def main():
                             'chrom': chrom,
                             'pos': pos,
                             'ref': converted_ref,
-                            'alt': converted_alt
+                            'alt': converted_alt,
+                            'pos_in_DV': True
                         })
                 elif team_status == 'SOMATIC':
                     if found_in_dv_germline:
