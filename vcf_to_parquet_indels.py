@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert DeepVariant VCF to parquet format with only indels.
-Optionally filters for not-difficult regions.
+Optionally annotates with not-difficult regions and coding regions.
 """
 
 import gzip
@@ -86,16 +86,17 @@ def convert_to_single_indel_format(ref, alt):
         return ref, alt
 
 
-def parse_vcf_to_dataframe(vcf_path, bed_trees=None, max_variants=None):
+def parse_vcf_to_dataframe(vcf_path, bed_trees=None, coding_bed_trees=None, max_variants=None):
     """
     Parse VCF file and extract indels into a DataFrame.
 
     Parameters:
     - vcf_path: Path to VCF file (can be gzipped)
-    - bed_trees: Optional BED interval trees for region annotation
+    - bed_trees: Optional BED interval trees for not-difficult region annotation
+    - coding_bed_trees: Optional BED interval trees for coding region annotation
     - max_variants: Optional limit on number of variants to process
 
-    Returns: DataFrame with indel information including in_notdifficult column
+    Returns: DataFrame with indel information including in_notdifficult and in_coding columns
     """
 
     # Storage for parsed data
@@ -105,6 +106,7 @@ def parse_vcf_to_dataframe(vcf_path, bed_trees=None, max_variants=None):
     total_variants = 0
     total_indels = 0
     indels_in_notdifficult = 0
+    indels_in_coding = 0
     multi_allelic = 0
     mixed_type = 0
 
@@ -192,6 +194,9 @@ def parse_vcf_to_dataframe(vcf_path, bed_trees=None, max_variants=None):
             # Check if position is in not-difficult region (only once per position)
             in_notdifficult = position_in_bed(chrom, pos, bed_trees) if bed_trees else True
 
+            # Check if position is in coding region (only once per position)
+            in_coding = position_in_bed(chrom, pos, coding_bed_trees) if coding_bed_trees else False
+
             # Process each indel allele
             for i, alt_allele in enumerate(alt_alleles):
                 # Skip non-indels
@@ -202,6 +207,9 @@ def parse_vcf_to_dataframe(vcf_path, bed_trees=None, max_variants=None):
 
                 if in_notdifficult:
                     indels_in_notdifficult += 1
+
+                if in_coding:
+                    indels_in_coding += 1
 
                 # Extract genotype information
                 gt = format_dict.get('GT', './.')
@@ -265,6 +273,7 @@ def parse_vcf_to_dataframe(vcf_path, bed_trees=None, max_variants=None):
                     'vaf': vaf,
                     'pl': pl,
                     'in_notdifficult': in_notdifficult,
+                    'in_coding': in_coding,
                     'is_multi_allelic': len(alt_alleles) > 1,
                     'has_multi_indels': has_multi_indels,
                     'has_mixed_indel_types': has_mixed_indel_types
@@ -280,6 +289,10 @@ def parse_vcf_to_dataframe(vcf_path, bed_trees=None, max_variants=None):
         print(f"  Indels in not-difficult regions: {indels_in_notdifficult:,} ({indels_in_notdifficult/total_indels*100:.1f}%)")
         print(f"  Indels in difficult regions: {total_indels - indels_in_notdifficult:,} ({(total_indels - indels_in_notdifficult)/total_indels*100:.1f}%)")
 
+    if coding_bed_trees:
+        print(f"  Indels in coding regions: {indels_in_coding:,} ({indels_in_coding/total_indels*100:.1f}%)")
+        print(f"  Indels in non-coding regions: {total_indels - indels_in_coding:,} ({(total_indels - indels_in_coding)/total_indels*100:.1f}%)")
+
     print(f"  Total indels in parquet: {len(data):,}")
 
     return pd.DataFrame(data)
@@ -290,17 +303,28 @@ def main():
     parser.add_argument('--input', '-i', required=True, help='Input VCF file (can be .vcf.gz)')
     parser.add_argument('--output', '-o', required=True, help='Output parquet file')
     parser.add_argument('--bed', '-b', help='BED file for annotating not-difficult regions (adds in_notdifficult column)')
+    parser.add_argument('--coding-bed', '-c', help='BED file for annotating coding regions (adds in_coding column)')
     parser.add_argument('--max-variants', '-m', type=int, help='Maximum variants to process (for testing)')
 
     args = parser.parse_args()
 
-    # Load BED file if provided
+    # Load BED file for not-difficult regions if provided
     bed_trees = None
     if args.bed:
         if not Path(args.bed).exists():
             print(f"ERROR: BED file not found: {args.bed}", file=sys.stderr)
             return 1
+        print("Loading not-difficult regions BED...")
         bed_trees = load_bed_intervals(args.bed)
+
+    # Load BED file for coding regions if provided
+    coding_bed_trees = None
+    if args.coding_bed:
+        if not Path(args.coding_bed).exists():
+            print(f"ERROR: Coding BED file not found: {args.coding_bed}", file=sys.stderr)
+            return 1
+        print("\nLoading coding regions BED...")
+        coding_bed_trees = load_bed_intervals(args.coding_bed)
 
     # Check input file
     if not Path(args.input).exists():
@@ -308,7 +332,7 @@ def main():
         return 1
 
     # Process VCF
-    df = parse_vcf_to_dataframe(args.input, bed_trees, args.max_variants)
+    df = parse_vcf_to_dataframe(args.input, bed_trees, coding_bed_trees, args.max_variants)
 
     if df.empty:
         print("WARNING: No indels found or all filtered out", file=sys.stderr)
@@ -341,9 +365,14 @@ def main():
     print(df['filter'].value_counts().head(10))
 
     if 'in_notdifficult' in df.columns and bed_trees:
-        print("\nRegion annotation:")
+        print("\nNot-difficult region annotation:")
         print(f"  In not-difficult regions: {df['in_notdifficult'].sum():,} ({df['in_notdifficult'].mean()*100:.1f}%)")
         print(f"  In difficult regions: {(~df['in_notdifficult']).sum():,} ({(~df['in_notdifficult']).mean()*100:.1f}%)")
+
+    if 'in_coding' in df.columns and coding_bed_trees:
+        print("\nCoding region annotation:")
+        print(f"  In coding regions: {df['in_coding'].sum():,} ({df['in_coding'].mean()*100:.1f}%)")
+        print(f"  In non-coding regions: {(~df['in_coding']).sum():,} ({(~df['in_coding']).mean()*100:.1f}%)")
 
     # Report on conversion statistics
     if 'conversion_applied' in df.columns:
