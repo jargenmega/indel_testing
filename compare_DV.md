@@ -138,6 +138,64 @@ chr1:791554  Original: REF=GGAATGGAATC, ALT=GGAATCGAATGGAATC  →  Converted: RE
 
 ### Step 2: Compare Indels Called Germline By Our Pipeline to Those Called Germline By DV
 
+**Objective**: Compare indels called as germline by the team's pipeline with those called as germline by DeepVariant, focusing on overlap statistics in not-difficult regions.
+What do we most care about?:
+1. False Positives: How many indels called somatic in Team B that were called Germline by DV
+2. False Negatives: How many indels called Germline by Team B that were called somatic by DV (in that DV didn't call them germline)
+3. True Negatives: We can also count the number of places where Team B and DV agree on Germline
+4. True Positives: We can also count the number of places where Team B and DV agree on somatic (in that DV didn't call them germline)
+
+
+Algo approach
+- 1 & 3 require checking
+- 2 & 4 can be counted by positions not in DV plus positions in DV but didn't match.
+Make the dfs smaller
+- team_b_df = team_b_df after dropping all rows in not difficult == FALSE (need to keep ref and germline and somatic)
+- DV_df = DV_df after dropping all rows in not difficult == FALSE and filter != PASS (only keep PASS in not difficult)
+
+Start with position checking
+- Makes sense to do one pass
+Counters:
+- false_positives_count = 0
+- true_negative_count = 0    
+- false_negatives_pos_in_DV = 0
+- false_negatives_pos_not_in_DV = 0
+- true_positives_pos_in_DV = 0
+- true_positives_pos_not_in_DV = 0
+
+false_positive_register_df initiate empty - chrom, pos, ref, alt
+false_negative_register_df initiate empty - chrom, pos, ref, alt
+
+- Positions need checking are:
+   - Team B positions where a row exists that is:
+      - type is alt, somatic or germline, not in difficult region
+   - DV positions with PASS and not in difficult region
+   - Check for set of positions that overlap
+   - Count not in DV at all:
+      - false_negatives_pos_not_in_DV = count of germline alts (count all germline alts not just pos) where pos not in DV
+      - true_positives_pos_not_in_DV = count of somatic alts (count all somatic alts not just pos) where pos not in DV
+- for positions that overlap:
+   - get the rows from Team B df
+   - get the ref for the pos from Team B df
+   - get the DV rows for the pos
+   - for the Team B alt rows for the pos:
+      - if the ref - alt pair match one of the DV ref - alt pairs for the position 
+         - if alt has status somatic
+            false_positives_count ++
+            Add the false positive to the register
+         - elseif alt has status germline 
+            true_negative_count ++
+         - else error
+      - else
+         - if alt has status somatic
+            true_positives_pos_in_DV ++
+         - elseif alt has status germline
+            false_negatives_pos_in_DV ++
+            Add the false negative to the register
+         - else error
+- save the registers
+- print out final results for counters
+            
 
 ### Step 3: Check if any Indels Called Somatic By Our Pipeline are Called Germline By DV
 
