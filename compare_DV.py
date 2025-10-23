@@ -37,7 +37,10 @@ DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
 # Testing mode - set to None to process all chromosomes, or list specific ones
-TESTING = None #['chr1']  # Examples: None, ['chr1'], ['chr1', 'chr2', 'chr21']
+TESTING = ['chr1']  # Examples: None, ['chr1'], ['chr1', 'chr2', 'chr21']
+
+# Optional filter - set to True to only include coding regions
+# FILTER_CODING_ONLY = False  # If True, only includes positions where in_coding == True
 
 def convert_to_single_indel_format(ref, alt):
     """Convert from combined VCF format to single-indel format"""
@@ -80,10 +83,30 @@ def main():
 
     # Filter datasets
     print("\nFiltering datasets...")
-    team_df = team_df[team_df['in_notdifficult'] == True].copy()
+    print("  Team B filters: in_notdifficult == True")
+    print("  AND removing: somatic ALTs where near_germ == True (keeping all REF rows)")
+
+    # Note: REF rows can have status='SOMATIC' when the reference allele is nearly absent
+    # (e.g., 1 read out of 30), indicating a germline variant has replaced the reference.
+    # We must keep ALL REF rows regardless of status since we need them for variant comparison.
+    # Filter: Keep all in not-difficult regions, but remove only somatic ALT alleles near germline sites
+    # Keep ALL REF rows and germline ALTs regardless of near_germ status
+    team_filter = (team_df['in_notdifficult'] == True) & \
+                  ~((team_df['allele_type'] == 'ALT') & (team_df['status'] == 'SOMATIC') & (team_df['near_germ'] == True))
+
+    # TODO: Need to add coding region filter to DV data as well
+    # Optionally filter for coding regions only
+    '''
+    if FILTER_CODING_ONLY:
+        team_filter = team_filter & (team_df['in_coding'] == True)
+        print("  Additional filter: in_coding == True (coding regions only) [!!! DV data not filtered !!!]")
+    '''
+
+    team_df = team_df[team_filter].copy()
     print(f"  Team B after filtering: {len(team_df):,} rows")
 
     # Note that there are some with PASS but genotype 0/0; we accept those.
+    print("  DeepVariant filters: in_notdifficult == True AND filter == 'PASS'")
     dv_df = dv_df[(dv_df['in_notdifficult'] == True) & (dv_df['filter'] == 'PASS')].copy()
     print(f"  DeepVariant after filtering: {len(dv_df):,} rows")
 
