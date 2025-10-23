@@ -37,21 +37,23 @@ DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
 # Testing mode - set to None to process all chromosomes, or list specific ones
-TESTING = ['chr1']  # Examples: None, ['chr1'], ['chr1', 'chr2', 'chr21']
+TESTING = None #, ['chr1'], ['chr1', 'chr2', 'chr21']
 
 # Optional filter - set to True to only include coding regions
-# FILTER_CODING_ONLY = False  # If True, only includes positions where in_coding == True
+FILTER_CODING_ONLY = True  # If True, only includes positions where in_coding == True
 
 def convert_to_single_indel_format(ref, alt):
     """Convert from combined VCF format to single-indel format"""
     anchor = ref[0]
     if len(alt) > len(ref):
-        # INSERTION
+        # INSERTION: bases inserted after anchor
+        # Example: REF=AGATCTG, ALT=ATGATCTG → REF=A, ALT=AT
         inserted_length = len(alt) - len(ref)
         inserted_bases = alt[1:1+inserted_length]
         return anchor, anchor + inserted_bases
     elif len(alt) < len(ref):
-        # DELETION
+        # DELETION: bases deleted after anchor
+        # Example: REF=AGATCTG, ALT=ACTG → REF=AGAT, ALT=A
         deleted_length = len(ref) - len(alt)
         deleted_bases = ref[1:1+deleted_length]
         return anchor + deleted_bases, anchor
@@ -93,21 +95,21 @@ def main():
     # Keep ALL REF rows and germline ALTs regardless of near_germ status
     team_filter = (team_df['in_notdifficult'] == True) & \
                   ~((team_df['allele_type'] == 'ALT') & (team_df['status'] == 'SOMATIC') & (team_df['near_germ'] == True))
-
-    # TODO: Need to add coding region filter to DV data as well
-    # Optionally filter for coding regions only
-    '''
     if FILTER_CODING_ONLY:
         team_filter = team_filter & (team_df['in_coding'] == True)
-        print("  Additional filter: in_coding == True (coding regions only) [!!! DV data not filtered !!!]")
-    '''
+        print("  Additional filter: in_coding == True (coding regions only)")
 
     team_df = team_df[team_filter].copy()
     print(f"  Team B after filtering: {len(team_df):,} rows")
 
     # Note that there are some with PASS but genotype 0/0; we accept those.
     print("  DeepVariant filters: in_notdifficult == True AND filter == 'PASS'")
-    dv_df = dv_df[(dv_df['in_notdifficult'] == True) & (dv_df['filter'] == 'PASS')].copy()
+    dv_filter = (dv_df['in_notdifficult'] == True) & (dv_df['filter'] == 'PASS')
+    if FILTER_CODING_ONLY:
+        dv_filter = dv_filter & (dv_df['in_coding'] == True)
+        print("  Additional filter: in_coding == True (coding regions only)")
+
+    dv_df = dv_df[dv_filter].copy()
     print(f"  DeepVariant after filtering: {len(dv_df):,} rows")
 
     # Initialize counters
