@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Compare Team B indel calls with DeepVariant calls
-Focus on germline/somatic classification agreement
+Compare Team B indel calls with DeepVariant calls using PROXIMITY matching
+Focus on germline/somatic classification agreement using position proximity
+rather than exact allele matching
+Note that there are some efficency optimisations that could be made to this code now that the actual sequences are not being compared, but it is pretty fast and making the changes would change the alogo compared to the exact matching version making them harder to compare directly.
 """
 
 import pandas as pd
@@ -9,6 +11,7 @@ import numpy as np
 from pathlib import Path
 import sys
 from datetime import datetime
+import bisect
 
 class Tee:
     """Class to duplicate stdout to both console and log file"""
@@ -36,11 +39,22 @@ DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
 DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
+# Proximity window for matching (in base pairs)
+PROXIMITY_WINDOW = 10  # Will check for DV indels within +/- 10bp of Team B position
+
 # Testing mode - set to None to process all chromosomes, or list specific ones
 TESTING = None #, ['chr1'], ['chr1', 'chr2', 'chr21']
 
 # Optional filter - set to True to only include coding regions
-FILTER_CODING_ONLY = False #True  # If True, only includes positions where in_coding == True
+FILTER_CODING_ONLY = False  # If True, only includes positions where in_coding == True
+
+def has_nearby_dv(pos, dv_positions_sorted, proximity):
+    """Check if any DV position exists within proximity window using binary search.
+    O(log n) time complexity instead of O(window_size)."""
+    lo = pos - proximity
+    hi = pos + proximity
+    i = bisect.bisect_left(dv_positions_sorted, lo)
+    return i < len(dv_positions_sorted) and dv_positions_sorted[i] <= hi
 
 def convert_to_single_indel_format(ref, alt):
     """Convert from combined VCF format to single-indel format"""
@@ -64,7 +78,7 @@ def main():
     # Set up logging
     Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = f"{OUTPUT_DIR}/compare_DV_log_{timestamp}.txt"
+    log_file = f"{OUTPUT_DIR}/compare_DV_proximity_log_{timestamp}.txt"
     tee = Tee(log_file)
 
     print(f"Logging to: {log_file}")
@@ -115,10 +129,8 @@ def main():
     # Initialize counters
     false_positives_count = 0
     true_negative_count = 0
-    false_negatives_pos_in_DV = 0
-    false_negatives_pos_not_in_DV = 0
-    true_positives_pos_in_DV = 0
-    true_positives_pos_not_in_DV = 0
+    false_negatives_count = 0
+    true_positives_count = 0
 
     # Initialize registers
     false_positive_register = []
@@ -149,24 +161,31 @@ def main():
             ((team_chrom['status'] == 'SOMATIC') | (team_chrom['status'] == 'GERMLINE'))
         ]['pos'].unique())
 
-        # Get DV positions
-        dv_positions = set(dv_chrom['pos'].unique())
+        # Get DV positions as a sorted list for efficient binary search
+        dv_positions_sorted = sorted(dv_chrom['pos'].unique())
 
-        # Split Team B positions into those in DV and not in DV
-        team_pos_in_dv = team_alt_positions & dv_positions
-        team_pos_not_in_dv = team_alt_positions - dv_positions
+        # For proximity matching, check each Team B position for nearby DV indels
+        team_pos_near_dv = set()
+        team_pos_not_near_dv = set()
+
+        for pos in team_alt_positions:
+            # Check if any DV position exists within proximity window using binary search
+            if has_nearby_dv(pos, dv_positions_sorted, PROXIMITY_WINDOW):
+                team_pos_near_dv.add(pos)
+            else:
+                team_pos_not_near_dv.add(pos)
 
         print(f"  Team ALT positions: {len(team_alt_positions):,}")
-        print(f"  DV positions: {len(dv_positions):,}")
-        print(f"  Overlapping: {len(team_pos_in_dv):,}")
-        print(f"  Team-only: {len(team_pos_not_in_dv):,}")
+        print(f"  DV positions: {len(dv_positions_sorted):,}")
+        print(f"  Team positions with DV within ±{PROXIMITY_WINDOW}bp: {len(team_pos_near_dv):,}")
+        print(f"  Team positions with no DV nearby: {len(team_pos_not_near_dv):,}")
 
-        # Process positions not in DV (using same algorithm pattern as in DV)
-        # These are positions where Team B calls an indel but DeepVariant doesn't call anything
+        # Process positions with no DV nearby (no DV indel within proximity window)
+        # These are positions where Team B calls an indel but DeepVariant doesn't call anything nearby
         # - GERMLINE calls here are false negatives (Team thinks germline, DV doesn't call)
         # - SOMATIC calls here are true positives (both agree not germline)
         # We collect false negatives for analysis but just count true positives (less problematic)
-        for pos in team_pos_not_in_dv:
+        for pos in team_pos_not_near_dv:
             # Get all Team B data at this position
             team_pos_all = team_chrom[team_chrom['pos'] == pos]
 
@@ -194,27 +213,25 @@ def main():
                 else:
                     converted_ref, converted_alt = ref_seq, alt_seq
 
-                # Categorize (position not in DV means DV doesn't call it)
+                # Categorize (no DV nearby means DV doesn't call germline in the region)
                 if team_status == 'GERMLINE':
-                    false_negatives_pos_not_in_DV += 1
+                    false_negatives_count += 1
                     false_negative_register.append({
                         'chrom': chrom,
                         'pos': pos,
                         'ref': converted_ref,
                         'alt': converted_alt,
-                        'pos_in_DV': False
+                        'dv_nearby': False
                     })
                 elif team_status == 'SOMATIC':
-                    true_positives_pos_not_in_DV += 1
+                    true_positives_count += 1
 
-        # Process overlapping positions (positions called by both Team B and DeepVariant)
-        # Here we check if the specific alleles match between Team B and DV
-        # - Team GERMLINE + DV match = true negative (both agree germline)
-        # - Team GERMLINE + no DV match = false negative (Team germline, DV doesn't match)
-        # - Team SOMATIC + DV match = false positive (Team somatic, DV germline)
-        # - Team SOMATIC + no DV match = true positive (both agree not germline)
-        # We collect false positives and false negatives for analysis
-        for pos in team_pos_in_dv:
+        # Process positions with DV nearby (DV indel exists within proximity window)
+        # Using proximity matching: if ANY DV indel exists within ±PROXIMITY_WINDOW bp, we consider it a match
+        # - Team GERMLINE + DV nearby = true negative (both agree germline, within proximity)
+        # - Team SOMATIC + DV nearby = false positive (Team somatic, DV germline nearby)
+        # We collect false positives for analysis
+        for pos in team_pos_near_dv:
             # Get all Team B data at this position
             team_pos_all = team_chrom[team_chrom['pos'] == pos]
 
@@ -231,10 +248,8 @@ def main():
             # Check if multi-allelic
             has_multiple_alts = len(team_alts) > 1
 
-            # Get DV data at this position (already filtered for PASS, we accept genotype 0/0)
-            dv_germline_at_pos = dv_chrom[dv_chrom['pos'] == pos]
-
             # Process each Team B ALT
+            # Since we're doing proximity matching, ANY DV indel nearby means DV calls germline in the region
             for _, team_alt in team_alts.iterrows():
                 alt_seq = team_alt['allele_seq']
                 team_status = team_alt['status']
@@ -245,60 +260,37 @@ def main():
                 else:
                     converted_ref, converted_alt = ref_seq, alt_seq
 
-                # Check for match in DV germline calls
-                found_in_dv_germline = False
-                for _, dv_row in dv_germline_at_pos.iterrows():
-                    if converted_ref == dv_row['ref'] and converted_alt == dv_row['alt']:
-                        found_in_dv_germline = True
-                        break
-
-                # Categorize
+                # Categorize based on proximity (DV indel exists within window = germline region)
                 if team_status == 'GERMLINE':
-                    if found_in_dv_germline:
-                        true_negative_count += 1  # Both agree germline
-                    else:
-                        false_negatives_pos_in_DV += 1  # Team says germline, DV doesn't
-                        false_negative_register.append({
-                            'chrom': chrom,
-                            'pos': pos,
-                            'ref': converted_ref,
-                            'alt': converted_alt,
-                            'pos_in_DV': True
-                        })
+                    true_negative_count += 1  # Both agree germline (Team germline, DV has indel nearby)
                 elif team_status == 'SOMATIC':
-                    if found_in_dv_germline:
-                        false_positives_count += 1  # Team says somatic, DV says germline
-                        false_positive_register.append({
-                            'chrom': chrom,
-                            'pos': pos,
-                            'ref': converted_ref,
-                            'alt': converted_alt
-                        })
-                    else:
-                        true_positives_pos_in_DV += 1  # Both agree not germline
+                    false_positives_count += 1  # Team says somatic, DV has germline indel nearby
+                    false_positive_register.append({
+                        'chrom': chrom,
+                        'pos': pos,
+                        'ref': converted_ref,
+                        'alt': converted_alt
+                    })
 
     # Print results
     print("\nProcessing complete!")
-    print("\n=== RESULTS ===")
+    print("\n=== RESULTS (PROXIMITY MATCHING) ===")
+    print(f"Note: Using proximity window of ±{PROXIMITY_WINDOW}bp for matching")
     print("Note: Counts are of ALT alleles and do not take into account allele depth")
     print("Note: Percentages use Team B calls as denominator to measure Team B accuracy")
-    print("Note: 'in DV' means position found in DeepVariant calls, but false because no allele match found in DV")
+    print("Note: DV indel within proximity window = germline region")
     print("-" * 60)
-
-    # Calculate totals for percentage calculations
-    total_false_negatives = false_negatives_pos_in_DV + false_negatives_pos_not_in_DV
-    total_true_positives = true_positives_pos_in_DV + true_positives_pos_not_in_DV
 
     # Total Team somatic and germline calls
     # These are used as denominators to measure Team B's accuracy
     # - For FP%: out of all Team somatic calls, how many were wrong?
     # - For TN%: out of all Team germline calls, how many were correct?
-    total_team_somatic = false_positives_count + total_true_positives
-    total_team_germline = true_negative_count + total_false_negatives
+    total_team_somatic = false_positives_count + true_positives_count
+    total_team_germline = true_negative_count + false_negatives_count
     total_team_calls = total_team_somatic + total_team_germline
 
     # Print with counts and percentages
-    print(f"False Positives (Team somatic, DV germline): {false_positives_count}", end="")
+    print(f"False Positives (Team somatic, DV germline nearby): {false_positives_count}", end="")
     if total_team_somatic > 0:
         print(f" ({false_positives_count/total_team_somatic*100:.1f}% of Team somatic)", end="")
     print()
@@ -308,45 +300,40 @@ def main():
         print(f" ({true_negative_count/total_team_germline*100:.1f}% of Team germline)", end="")
     print()
 
-    print(f"False Negatives in DV (Team germline, DV not): {false_negatives_pos_in_DV}")
-    print(f"False Negatives not in DV: {false_negatives_pos_not_in_DV}")
-    print(f"True Positives in DV (Both not germline): {true_positives_pos_in_DV}")
-    print(f"True Positives not in DV: {true_positives_pos_not_in_DV}")
-
-    print(f"\nTotal False Negatives: {total_false_negatives}", end="")
+    print(f"False Negatives (Team germline, no DV nearby): {false_negatives_count}", end="")
     if total_team_germline > 0:
-        print(f" ({total_false_negatives/total_team_germline*100:.1f}% of Team germline)", end="")
+        print(f" ({false_negatives_count/total_team_germline*100:.1f}% of Team germline)", end="")
     print()
 
-    print(f"Total True Positives: {total_true_positives}", end="")
+    print(f"True Positives (Team somatic, no DV nearby): {true_positives_count}", end="")
     if total_team_somatic > 0:
-        print(f" ({total_true_positives/total_team_somatic*100:.1f}% of Team somatic)", end="")
+        print(f" ({true_positives_count/total_team_somatic*100:.1f}% of Team somatic)", end="")
     print()
 
     # Overall accuracy metrics
     if total_team_calls > 0:
-        correct = true_negative_count + total_true_positives
+        correct = true_negative_count + true_positives_count
         print(f"\n--- OVERALL METRICS ---")
         print(f"Total Team ALT calls analyzed: {total_team_calls:,}")
         print(f"Team somatic calls: {total_team_somatic:,} ({total_team_somatic/total_team_calls*100:.1f}%)")
         print(f"Team germline calls: {total_team_germline:,} ({total_team_germline/total_team_calls*100:.1f}%)")
-        print(f"Agreement with DV: {correct:,}/{total_team_calls:,} ({correct/total_team_calls*100:.1f}%)")
+        print(f"Agreement with DV (proximity): {correct:,}/{total_team_calls:,} ({correct/total_team_calls*100:.1f}%)")
 
         if total_team_somatic > 0:
-            print(f"Somatic precision: {total_true_positives/total_team_somatic*100:.1f}%")
+            print(f"Somatic precision: {true_positives_count/total_team_somatic*100:.1f}%")
         if total_team_germline > 0:
             print(f"Germline precision: {true_negative_count/total_team_germline*100:.1f}%")
 
     # Save registers (use same timestamp as log)
     if false_positive_register:
         fp_df = pd.DataFrame(false_positive_register)
-        fp_file = f"{OUTPUT_DIR}/false_positives_{timestamp}.csv"
+        fp_file = f"{OUTPUT_DIR}/false_positives_proximity_{timestamp}.csv"
         fp_df.to_csv(fp_file, index=False)
         print(f"\nFalse positives saved to: {fp_file}")
 
     if false_negative_register:
         fn_df = pd.DataFrame(false_negative_register)
-        fn_file = f"{OUTPUT_DIR}/false_negatives_{timestamp}.csv"
+        fn_file = f"{OUTPUT_DIR}/false_negatives_proximity_{timestamp}.csv"
         fn_df.to_csv(fn_file, index=False)
         print(f"False negatives saved to: {fn_file}")
 

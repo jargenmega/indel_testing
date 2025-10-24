@@ -219,6 +219,73 @@ The percentages measure **Team B's accuracy** using Team B's own classifications
 - **Somatic precision**: How accurate are Team B's somatic calls?
 - **Germline precision**: How accurate are Team B's germline calls?
 
+### Step 2b: Proximity-Based Comparison (compare_DV_proximity.py)
+
+**Purpose**: Address variant representation differences by using proximity-based matching instead of exact position matching.
+
+**Motivation**: Different variant callers often represent the same genomic variation at slightly different positions, especially for:
+- Complex indels that can be left or right aligned differently
+- Adjacent variants that may be merged or split differently
+- Repetitive regions where exact positioning is ambiguous
+
+**Script**: `compare_DV_proximity.py`
+
+#### Key Differences from Exact Matching:
+1. **Proximity Window**: Uses a configurable window (default ±10bp) to match variants
+2. **Binary Matching**: If ANY DV indel exists within the window, it's considered a match
+3. **No Allele Checking**: Doesn't verify specific REF/ALT sequences, only proximity
+4. **Optimized Performance**: Uses binary search (O(log n)) for position lookups
+
+#### Algorithm:
+```python
+PROXIMITY_WINDOW = 10  # Configurable ±bp window
+
+# For each Team B position, check if any DV indel exists within window
+def has_nearby_dv(pos, dv_positions_sorted, proximity):
+    lo = pos - proximity
+    hi = pos + proximity
+    i = bisect.bisect_left(dv_positions_sorted, lo)
+    return i < len(dv_positions_sorted) and dv_positions_sorted[i] <= hi
+```
+
+#### Results Comparison: Exact vs Proximity Matching
+
+**Full Genome Results:**
+| Metric | Exact Match | Proximity (±10bp) | Improvement |
+|--------|------------|-------------------|-------------|
+| False Negatives | 6,438 (3.4%) | 2,393 (1.3%) | **-63% reduction** |
+| True Negatives | 183,313 (96.6%) | 187,358 (98.7%) | **+2.1% improvement** |
+| False Positives | 262 (0.1%) | 393 (0.1%) | +131 (minimal impact) |
+| Overall Agreement | 98.6% | 99.4% | **+0.8%** |
+
+**Coding Regions Only:**
+| Metric | Exact Match | Proximity (±10bp) | Improvement |
+|--------|------------|-------------------|-------------|
+| False Negatives | 28 (8.9%) | 22 (7.0%) | **-21% reduction** |
+| True Negatives | 285 (91.1%) | 291 (93.0%) | **+1.9% improvement** |
+| False Positives | 1 (0.0%) | 1 (0.0%) | No change |
+| Overall Agreement | 99.3% | 99.4% | **+0.1%** |
+
+#### Key Findings:
+1. **Variant Representation Impact**: ~63% of apparent false negatives genome-wide are due to position representation differences
+2. **Excellent Trade-off**: Recovered 4,045 false negatives at the cost of only 131 additional false positives (31:1 ratio)
+3. **Real-world Example**: chr16:88533291 - Team B calls one 6bp deletion, DeepVariant calls three smaller deletions nearby
+4. **Coding Region Challenges**: Higher false negative rate in coding (7.0% vs 1.3% genome-wide) even with proximity matching
+
+#### Usage:
+```bash
+# Run with coding filter
+python compare_DV_proximity.py  # FILTER_CODING_ONLY = True
+
+# Run on full genome
+python compare_DV_proximity.py  # FILTER_CODING_ONLY = False
+```
+
+#### Output Files:
+- `compare_DV_proximity_log_*.txt` - Detailed processing log
+- `false_positives_proximity_*.csv` - False positive variants
+- `false_negatives_proximity_*.csv` - False negative variants with `dv_nearby` column
+
 ### Step 3: Check if any Indels Called Somatic By Our Pipeline are Called Germline By DV
 
 
