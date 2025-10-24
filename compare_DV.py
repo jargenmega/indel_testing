@@ -180,16 +180,14 @@ def main():
             # Get Team B ALTs
             team_alts = team_pos_all[(team_pos_all['allele_type'] == 'ALT')]
 
-            # Check if multi-allelic
-            has_multiple_alts = len(team_alts) > 1
-
             # Process each Team B ALT
             for _, team_alt in team_alts.iterrows():
                 alt_seq = team_alt['allele_seq']
                 team_status = team_alt['status']
 
-                # Apply conversion if multi-indel allelic resulting in complex REF/ALT
-                if has_multiple_alts:
+                # Apply conversion if neither ref nor alt is 1bp (anchor)
+                # Single-indel format should always have either ref=1bp or alt=1bp
+                if len(ref_seq) > 1 and len(alt_seq) > 1:
                     converted_ref, converted_alt = convert_to_single_indel_format(ref_seq, alt_seq)
                 else:
                     converted_ref, converted_alt = ref_seq, alt_seq
@@ -230,9 +228,6 @@ def main():
             # Get Team B ALTs
             team_alts = team_pos_all[(team_pos_all['allele_type'] == 'ALT')]
 
-            # Check if multi-allelic
-            has_multiple_alts = len(team_alts) > 1
-
             # Get DV data at this position (already filtered for PASS, we accept genotype 0/0)
             dv_germline_at_pos = dv_chrom[dv_chrom['pos'] == pos]
 
@@ -241,8 +236,9 @@ def main():
                 alt_seq = team_alt['allele_seq']
                 team_status = team_alt['status']
 
-                # Apply conversion if multi-indel allelic resulting in complex REF/ALT
-                if has_multiple_alts:
+                # Apply conversion if neither ref nor alt is 1bp (anchor)
+                # Single-indel format should always have either ref=1bp or alt=1bp
+                if len(ref_seq) > 1 and len(alt_seq) > 1:
                     converted_ref, converted_alt = convert_to_single_indel_format(ref_seq, alt_seq)
                 else:
                     converted_ref, converted_alt = ref_seq, alt_seq

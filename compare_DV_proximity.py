@@ -103,7 +103,7 @@ def main():
     print("  AND removing: somatic ALTs where near_germ == True (keeping all REF rows)")
 
     # Note: REF rows can have status='SOMATIC' when the reference allele is nearly absent
-    # (e.g., 1 read out of 30), indicating a germline variant has replaced the reference.
+    # (e.g., 1 re1ad out of 30), indicating a germline variant has replaced the reference.
     # We must keep ALL REF rows regardless of status since we need them for variant comparison.
     # Filter: Keep all in not-difficult regions, but remove only somatic ALT alleles near germline sites
     # Keep ALL REF rows and germline ALTs regardless of near_germ status
@@ -199,16 +199,14 @@ def main():
             # Get Team B ALTs
             team_alts = team_pos_all[(team_pos_all['allele_type'] == 'ALT')]
 
-            # Check if multi-allelic
-            has_multiple_alts = len(team_alts) > 1
-
             # Process each Team B ALT
             for _, team_alt in team_alts.iterrows():
                 alt_seq = team_alt['allele_seq']
                 team_status = team_alt['status']
 
-                # Apply conversion if multi-indel allelic resulting in complex REF/ALT
-                if has_multiple_alts:
+                # Apply conversion if neither ref nor alt is 1bp (anchor)
+                # Single-indel format should always have either ref=1bp or alt=1bp
+                if len(ref_seq) > 1 and len(alt_seq) > 1:
                     converted_ref, converted_alt = convert_to_single_indel_format(ref_seq, alt_seq)
                 else:
                     converted_ref, converted_alt = ref_seq, alt_seq
@@ -247,17 +245,15 @@ def main():
             # Get Team B ALTs
             team_alts = team_pos_all[(team_pos_all['allele_type'] == 'ALT')]
 
-            # Check if multi-allelic
-            has_multiple_alts = len(team_alts) > 1
-
             # Process each Team B ALT
             # Since we're doing proximity matching, ANY DV indel nearby means DV calls germline in the region
             for _, team_alt in team_alts.iterrows():
                 alt_seq = team_alt['allele_seq']
                 team_status = team_alt['status']
 
-                # Apply conversion if multi-indel allelic resulting in complex REF/ALT
-                if has_multiple_alts:
+                # Apply conversion if neither ref nor alt is 1bp (anchor)
+                # Single-indel format should always have either ref=1bp or alt=1bp
+                if len(ref_seq) > 1 and len(alt_seq) > 1:
                     converted_ref, converted_alt = convert_to_single_indel_format(ref_seq, alt_seq)
                 else:
                     converted_ref, converted_alt = ref_seq, alt_seq
