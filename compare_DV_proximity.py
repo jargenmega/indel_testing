@@ -221,7 +221,9 @@ def main():
                         'pos': pos,
                         'ref': converted_ref,
                         'alt': converted_alt,
-                        'dv_nearby': False
+                        'dv_nearby': False,
+                        'allele_depth': team_alt['allele_depth'],
+                        'total_depth': team_alt['total_depth']
                     })
                 elif team_status == 'SOMATIC':
                     true_positives_count += 1
@@ -269,7 +271,9 @@ def main():
                         'chrom': chrom,
                         'pos': pos,
                         'ref': converted_ref,
-                        'alt': converted_alt
+                        'alt': converted_alt,
+                        'allele_depth': team_alt['allele_depth'],
+                        'total_depth': team_alt['total_depth']
                     })
 
     # Print results

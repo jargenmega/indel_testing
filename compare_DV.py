@@ -202,7 +202,9 @@ def main():
                         'pos': pos,
                         'ref': converted_ref,
                         'alt': converted_alt,
-                        'pos_in_DV': False
+                        'pos_in_DV': False,
+                        'allele_depth': team_alt['allele_depth'],
+                        'total_depth': team_alt['total_depth']
                     })
                 elif team_status == 'SOMATIC':
                     true_positives_pos_not_in_DV += 1
@@ -263,7 +265,9 @@ def main():
                             'pos': pos,
                             'ref': converted_ref,
                             'alt': converted_alt,
-                            'pos_in_DV': True
+                            'pos_in_DV': True,
+                            'allele_depth': team_alt['allele_depth'],
+                            'total_depth': team_alt['total_depth']
                         })
                 elif team_status == 'SOMATIC':
                     if found_in_dv_germline:
@@ -272,7 +276,9 @@ def main():
                             'chrom': chrom,
                             'pos': pos,
                             'ref': converted_ref,
-                            'alt': converted_alt
+                            'alt': converted_alt,
+                            'allele_depth': team_alt['allele_depth'],
+                            'total_depth': team_alt['total_depth']
                         })
                     else:
                         true_positives_pos_in_DV += 1  # Both agree not germline
