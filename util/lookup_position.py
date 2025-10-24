@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 Utility to lookup a specific position in Team B and DeepVariant parquet files
+Also shows DeepVariant indels within ±10bp for proximity matching analysis
 Usage: python lookup_position.py <chromosome> <position>
    or: python lookup_position.py <chromosome>,<position>
 Example: python lookup_position.py chr1 12345
 Example: python lookup_position.py chr1,12345
+Example: python util/lookup_position.py chr1,12345
 """
 
 import pandas as pd
@@ -16,6 +18,9 @@ TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results"
 TEAM_SAMPLE_FILE = "sample1_indels_only.parquet"
 DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
 DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
+
+# Proximity window for searching nearby DV indels (same as compare_DV_proximity.py)
+PROXIMITY_WINDOW = 25
 
 def main():
     # Parse arguments - support both space and comma separated
@@ -128,6 +133,52 @@ def main():
                 print(f"  Original: {dv_row['original_ref']} -> {dv_row['original_alt']}")
     else:
         print("No rows found at this position")
+
+    # Search for DeepVariant indels within proximity window
+    print("\n" + "-" * 80)
+    print(f"\n### DEEPVARIANT INDELS WITHIN ±{PROXIMITY_WINDOW}bp (proximity matching) ###")
+
+    # Get positions within the window, excluding the exact position we already showed
+    low_pos = pos - PROXIMITY_WINDOW
+    high_pos = pos + PROXIMITY_WINDOW
+
+    dv_nearby = dv_df[
+        (dv_df['chrom'] == chrom) &
+        (dv_df['pos'] >= low_pos) &
+        (dv_df['pos'] <= high_pos) &
+        (dv_df['pos'] != pos)  # Exclude exact position already shown above
+    ].sort_values('pos')
+
+    if len(dv_nearby) > 0:
+        print(f"Found {len(dv_nearby)} DV indels in range {chrom}:{low_pos}-{high_pos} (excluding exact position):\n")
+
+        # Group by position for clearer display
+        for position in sorted(dv_nearby['pos'].unique()):
+            pos_rows = dv_nearby[dv_nearby['pos'] == position]
+            distance = position - pos
+            distance_str = f"+{distance}" if distance > 0 else str(distance)
+
+            print(f"Position {chrom}:{position} (offset {distance_str}bp):")
+            for _, row in pos_rows.iterrows():
+                ref = row['ref']
+                alt = row['alt']
+                filt = row['filter']
+                vaf = row.get('vaf', 'N/A')
+                vaf_str = f"{vaf:.3f}" if vaf != 'N/A' and not pd.isna(vaf) else 'N/A'
+
+                deletion_size = len(ref) - len(alt) if len(ref) > len(alt) else 0
+                insertion_size = len(alt) - len(ref) if len(alt) > len(ref) else 0
+
+                if deletion_size > 0:
+                    var_type = f"{deletion_size}bp deletion"
+                elif insertion_size > 0:
+                    var_type = f"{insertion_size}bp insertion"
+                else:
+                    var_type = "substitution"
+
+                print(f"  {ref:10s} -> {alt:10s} ({var_type}, filter={filt}, VAF={vaf_str})")
+    else:
+        print(f"No DV indels found within ±{PROXIMITY_WINDOW}bp of position {pos}")
 
     print("\n" + "=" * 80)
 
