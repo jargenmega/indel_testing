@@ -36,11 +36,14 @@ DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
 DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
+# Output file prefix - set to descriptive name like "s1_all", "s1_coding", "s2_all", etc.
+OUTPUT_PREFIX = "s1_coding"  # Example: "s1_all" will create files like "compare_DV_log_s1_all_20251024_123456.txt"
+
 # Testing mode - set to None to process all chromosomes, or list specific ones
 TESTING = None #, ['chr1'], ['chr1', 'chr2', 'chr21']
 
 # Optional filter - set to True to only include coding regions
-FILTER_CODING_ONLY = False #True  # If True, only includes positions where in_coding == True
+FILTER_CODING_ONLY = True #True  # If True, only includes positions where in_coding == True
 
 def convert_to_single_indel_format(ref, alt):
     """Convert from combined VCF format to single-indel format"""
@@ -64,7 +67,9 @@ def main():
     # Set up logging
     Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = f"{OUTPUT_DIR}/compare_DV_log_{timestamp}.txt"
+    # Add prefix before "compare_" so files sort by run
+    prefix_part = f"{OUTPUT_PREFIX}_" if OUTPUT_PREFIX else ""
+    log_file = f"{OUTPUT_DIR}/{prefix_part}compare_DV_log_{timestamp}.txt"
     tee = Tee(log_file)
 
     print(f"Logging to: {log_file}")
@@ -342,13 +347,13 @@ def main():
     # Save registers (use same timestamp as log)
     if false_positive_register:
         fp_df = pd.DataFrame(false_positive_register)
-        fp_file = f"{OUTPUT_DIR}/false_positives_{timestamp}.csv"
+        fp_file = f"{OUTPUT_DIR}/{prefix_part}false_positives_{timestamp}.csv"
         fp_df.to_csv(fp_file, index=False)
         print(f"\nFalse positives saved to: {fp_file}")
 
     if false_negative_register:
         fn_df = pd.DataFrame(false_negative_register)
-        fn_file = f"{OUTPUT_DIR}/false_negatives_{timestamp}.csv"
+        fn_file = f"{OUTPUT_DIR}/{prefix_part}false_negatives_{timestamp}.csv"
         fn_df.to_csv(fn_file, index=False)
         print(f"False negatives saved to: {fn_file}")
 
