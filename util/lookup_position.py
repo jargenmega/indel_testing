@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Utility to lookup a specific position in Team B and DeepVariant parquet files
-Also shows DeepVariant indels within ±10bp for proximity matching analysis
+Also shows Team B and DeepVariant indels within ±25bp for proximity matching analysis
+Shows both somatic and germline calls from Team B within the proximity window
 Usage: python lookup_position.py <chromosome> <position>
    or: python lookup_position.py <chromosome>,<position>
 Example: python lookup_position.py chr1 12345
@@ -14,7 +15,7 @@ import sys
 from pathlib import Path
 
 # Configuration (same as compare_DV.py)
-TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results"
+TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results/Oct15"
 TEAM_SAMPLE_FILE = "sample1_indels_only.parquet"
 DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
 DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
@@ -134,13 +135,68 @@ def main():
     else:
         print("No rows found at this position")
 
-    # Search for DeepVariant indels within proximity window
+    # Search for Team B indels within proximity window
     print("\n" + "-" * 80)
-    print(f"\n### DEEPVARIANT INDELS WITHIN ±{PROXIMITY_WINDOW}bp (proximity matching) ###")
+    print(f"\n### TEAM B INDELS WITHIN ±{PROXIMITY_WINDOW}bp (proximity matching) ###")
 
     # Get positions within the window, excluding the exact position we already showed
     low_pos = pos - PROXIMITY_WINDOW
     high_pos = pos + PROXIMITY_WINDOW
+
+    team_nearby = team_df[
+        (team_df['chrom'] == chrom) &
+        (team_df['pos'] >= low_pos) &
+        (team_df['pos'] <= high_pos) &
+        (team_df['pos'] != pos) &  # Exclude exact position already shown above
+        (team_df['allele_type'] == 'ALT')  # Only show ALT alleles for nearby positions
+    ].sort_values('pos')
+
+    if len(team_nearby) > 0:
+        print(f"Found {len(team_nearby)} Team B ALT alleles in range {chrom}:{low_pos}-{high_pos} (excluding exact position):\n")
+
+        # Group by position for clearer display
+        for position in sorted(team_nearby['pos'].unique()):
+            pos_rows = team_nearby[team_nearby['pos'] == position]
+            distance = position - pos
+            distance_str = f"+{distance}" if distance > 0 else str(distance)
+
+            # Get REF for this position if available
+            ref_at_pos = team_df[(team_df['chrom'] == chrom) & (team_df['pos'] == position) &
+                                  (team_df['allele_type'] == 'REF')]
+            ref_seq = ref_at_pos.iloc[0]['allele_seq'] if len(ref_at_pos) > 0 else "N/A"
+
+            print(f"Position {chrom}:{position} (offset {distance_str}bp), REF={ref_seq}:")
+            for _, row in pos_rows.iterrows():
+                alt_seq = row['allele_seq']
+                status = row['status']
+                depth = row.get('allele_depth', 'N/A')
+                total = row.get('total_depth', 'N/A')
+                near_germ = row.get('near_germ', 'N/A')
+                not_difficult = row.get('in_notdifficult', 'N/A')
+
+                vaf = depth/total if depth != 'N/A' and total != 'N/A' and total > 0 else 'N/A'
+                vaf_str = f"{vaf:.3f}" if vaf != 'N/A' else 'N/A'
+
+                if ref_seq != "N/A" and alt_seq != "N/A":
+                    deletion_size = len(ref_seq) - len(alt_seq) if len(ref_seq) > len(alt_seq) else 0
+                    insertion_size = len(alt_seq) - len(ref_seq) if len(alt_seq) > len(ref_seq) else 0
+
+                    if deletion_size > 0:
+                        var_type = f"{deletion_size}bp deletion"
+                    elif insertion_size > 0:
+                        var_type = f"{insertion_size}bp insertion"
+                    else:
+                        var_type = "substitution"
+                else:
+                    var_type = "unknown"
+
+                print(f"  {alt_seq:10s} ({status}, {var_type}, depth={depth}/{total}, VAF={vaf_str}, near_germ={near_germ}, in_notdifficult={not_difficult})")
+    else:
+        print(f"No Team B ALT alleles found within ±{PROXIMITY_WINDOW}bp of position {pos}")
+
+    # Search for DeepVariant indels within proximity window
+    print("\n" + "-" * 80)
+    print(f"\n### DEEPVARIANT INDELS WITHIN ±{PROXIMITY_WINDOW}bp (proximity matching) ###")
 
     dv_nearby = dv_df[
         (dv_df['chrom'] == chrom) &
@@ -164,6 +220,7 @@ def main():
                 alt = row['alt']
                 filt = row['filter']
                 vaf = row.get('vaf', 'N/A')
+                not_difficult = row.get('in_notdifficult', 'N/A')
                 vaf_str = f"{vaf:.3f}" if vaf != 'N/A' and not pd.isna(vaf) else 'N/A'
 
                 deletion_size = len(ref) - len(alt) if len(ref) > len(alt) else 0
@@ -176,7 +233,7 @@ def main():
                 else:
                     var_type = "substitution"
 
-                print(f"  {ref:10s} -> {alt:10s} ({var_type}, filter={filt}, VAF={vaf_str})")
+                print(f"  {ref:10s} -> {alt:10s} ({var_type}, filter={filt}, VAF={vaf_str}, in_notdifficult={not_difficult})")
     else:
         print(f"No DV indels found within ±{PROXIMITY_WINDOW}bp of position {pos}")
 

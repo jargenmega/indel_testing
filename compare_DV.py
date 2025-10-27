@@ -30,20 +30,20 @@ class Tee:
         self.file.flush()
 
 # Configuration
-TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results"
+TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results/Oct15"
 TEAM_SAMPLE_FILE = "sample1_indels_only.parquet"
 DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
 DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
 # Output file prefix - set to descriptive name like "s1_all", "s1_coding", "s2_all", etc.
-OUTPUT_PREFIX = "s1_coding"  # Example: "s1_all" will create files like "compare_DV_log_s1_all_20251024_123456.txt"
+OUTPUT_PREFIX = "s1_all"  # Example: "s1_all" will create files like "compare_DV_log_s1_all_20251024_123456.txt"
 
 # Testing mode - set to None to process all chromosomes, or list specific ones
 TESTING = None #, ['chr1'], ['chr1', 'chr2', 'chr21']
 
 # Optional filter - set to True to only include coding regions
-FILTER_CODING_ONLY = True #True  # If True, only includes positions where in_coding == True
+FILTER_CODING_ONLY = False #True  # If True, only includes positions where in_coding == True
 
 def convert_to_single_indel_format(ref, alt):
     """Convert from combined VCF format to single-indel format"""

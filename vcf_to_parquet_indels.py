@@ -41,12 +41,18 @@ def load_bed_intervals(bed_file):
 
 
 def position_in_bed(chrom, pos, bed_trees):
-    """Check if position falls within any BED region."""
+    """Check if position falls within any BED region.
+
+    Note: VCF positions are 1-based, BED regions use 0-based half-open coordinates.
+    We convert the VCF position to 0-based before checking against BED intervals.
+    """
     if bed_trees is None:
         return True  # No filtering if no BED file provided
     if chrom not in bed_trees:
         return False
-    return len(bed_trees[chrom][pos]) > 0
+    # Convert VCF 1-based position to 0-based for BED comparison
+    pos_0based = pos - 1
+    return len(bed_trees[chrom][pos_0based]) > 0
 
 
 def convert_to_single_indel_format(ref, alt):

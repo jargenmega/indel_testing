@@ -33,14 +33,14 @@ class Tee:
         self.file.flush()
 
 # Configuration
-TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results"
+TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results/Oct15"
 TEAM_SAMPLE_FILE = "sample1_indels_only.parquet"
 DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
 DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
 # Output file prefix - set to descriptive name like "s1_all", "s1_coding", "s2_all", etc.
-OUTPUT_PREFIX = "s1_coding"  # Example: "s1_all" will create files like "s1_all_compare_DV_proximity_log_20251024_123456.txt"
+OUTPUT_PREFIX = "s1_all_bedfix"  # Example: "s1_all" will create files like "s1_all_compare_DV_proximity_log_20251024_123456.txt"
 
 # Proximity window for matching (in base pairs)
 PROXIMITY_WINDOW = 10  # Will check for DV indels within +/- 10bp of Team B position
@@ -49,7 +49,7 @@ PROXIMITY_WINDOW = 10  # Will check for DV indels within +/- 10bp of Team B posi
 TESTING = None #, ['chr1'], ['chr1', 'chr2', 'chr21']
 
 # Optional filter - set to True to only include coding regions
-FILTER_CODING_ONLY = True  # If True, only includes positions where in_coding == True
+FILTER_CODING_ONLY = False  # If True, only includes positions where in_coding == True
 
 def has_nearby_dv(pos, dv_positions_sorted, proximity):
     """Check if any DV position exists within proximity window using binary search.
@@ -121,15 +121,13 @@ def main():
     team_df = team_df[team_filter].copy()
     print(f"  Team B after filtering: {len(team_df):,} rows")
 
+    # For the DV data when using the proximity based matching we want to keep all of the germline calls regardless of of whether they are in difficult or non-coding.
+    # This is because a germline position may be just on the other side of a region boudary and as a result not be counted as being in close proximity to a Team B call.
+    # But for our purposes we want to know about these DV germline calls just out side the region since there is often artifacts that result in Team B calling somatic variants near germline indels.
+    # Note that this is not the case for the exact matching version of the code since in that case we only care about DV calls that exactly match Team B calls which are all in non-difficult/coding regions.
     # Note that there are some with PASS but genotype 0/0; we accept those.
-    print("  DeepVariant filters: in_notdifficult == True AND filter == 'PASS'")
-    dv_filter = (dv_df['in_notdifficult'] == True) & (dv_df['filter'] == 'PASS')
-    if FILTER_CODING_ONLY:
-        dv_filter = dv_filter & (dv_df['in_coding'] == True)
-        print("  Additional filter: in_coding == True (coding regions only)")
-
-    dv_df = dv_df[dv_filter].copy()
-    print(f"  DeepVariant after filtering: {len(dv_df):,} rows")
+    dv_df = dv_df[dv_df['filter'] == 'PASS'].copy()
+    print(f"  DeepVariant after filtering (Only filter on PASS for proximity matching): {len(dv_df):,} rows")
 
     # Initialize counters
     false_positives_count = 0
@@ -282,8 +280,7 @@ def main():
     print("\n=== RESULTS (PROXIMITY MATCHING) ===")
     print(f"Note: Using proximity window of ±{PROXIMITY_WINDOW}bp for matching")
     print("Note: Counts are of ALT alleles and do not take into account allele depth")
-    print("Note: Percentages use Team B calls as denominator to measure Team B accuracy")
-    print("Note: DV indel within proximity window = germline region")
+    print("Note: DV indels in all regions included for proximity")
     print("-" * 60)
 
     # Total Team somatic and germline calls
