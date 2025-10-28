@@ -16,9 +16,9 @@ from pathlib import Path
 
 # Configuration (same as compare_DV.py)
 TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results/Oct15"
-TEAM_SAMPLE_FILE = "sample1_indels_only.parquet"
+TEAM_SAMPLE_FILE = "sample2_indels_only.parquet"
 DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
-DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
+DV_SAMPLE_FILE = "GTEx-sample2.indels.parquet"
 
 # Proximity window for searching nearby DV indels (same as compare_DV_proximity.py)
 PROXIMITY_WINDOW = 25

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Generate summary statistics for a DeepVariant indel parquet file.
-Focuses on indel length distribution, chromosome distribution, and per-base rates
-for all calls as well as calls in coding and not-difficult regions.
+Generate overview plots and summary statistics for Team B somatic indels.
+Filters the Team B parquet to somatic ALT alleles, normalizes multi-allelic
+records into single-indel format, and reports length distributions, chromosome
+distributions, and per-base rates for all calls, coding regions, and
+not-difficult regions.
 """
 
 from __future__ import annotations
@@ -17,29 +19,23 @@ import numpy as np
 import pandas as pd
 
 DEFAULT_DATASET = Path(
-    "/home/ubuntu/data/teamb_indel-caller/deep_variant/GTEx-sample1.indels.parquet"
-)
-DEFAULT_OUTPUT_DIR = Path(
-    "/home/ubuntu/data/indel_comparison_results/DV_stats"
-)
-DEFAULT_TEAM_DATASET = Path(
     "/home/ubuntu/data/teamb_indel-caller/results/Oct15/sample1_indels_only.parquet"
 )
-DEFAULT_TEAM_OUTPUT_DIR = Path(
+DEFAULT_OUTPUT_DIR = Path(
     "/home/ubuntu/data/indel_comparison_results/Team_stats"
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Summarize DeepVariant indel parquet content."
+        description="Summarize Team B somatic indel parquet content."
     )
     parser.add_argument(
         "parquet_path",
         nargs="?",
         type=Path,
         default=DEFAULT_DATASET,
-        help=f"Path to DeepVariant indel parquet (default: {DEFAULT_DATASET})",
+        help=f"Path to Team B indel parquet (default: {DEFAULT_DATASET})",
     )
     parser.add_argument(
         "--output-dir",
@@ -48,53 +44,25 @@ def parse_args() -> argparse.Namespace:
         help=f"Directory to write summary text and plots (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
-        "--team-parquet-path",
-        type=Path,
-        default=DEFAULT_TEAM_DATASET,
-        help=f"Optional Team B parquet path for chr19 comparison plot (default: {DEFAULT_TEAM_DATASET})",
-    )
-    parser.add_argument(
-        "--team-output-dir",
-        type=Path,
-        default=DEFAULT_TEAM_OUTPUT_DIR,
-        help=f"Directory containing Team B outputs (default: {DEFAULT_TEAM_OUTPUT_DIR})",
+        "--exclude-near-germ",
+        action="store_true",
+        help="Exclude ALT alleles where near_germ == True before generating summaries.",
     )
     return parser.parse_args()
 
 
-def load_dataset(path: Path) -> pd.DataFrame:
-    columns = [
-        "chrom",
-        "pos",
-        "indel_size",
-        "indel_type",
-        "in_coding",
-        "in_notdifficult",
-    ]
-    df = pd.read_parquet(path, columns=columns)
-    # Defensive copy to avoid pandas SettingWithCopy warnings downstream.
-    return df.copy()
-
-
-def load_team_chr19_data(path: Path) -> pd.DataFrame:
-    """
-    Load Team B somatic ALT records for chr19 including region annotations.
-    """
-    columns = [
-        "chrom",
-        "pos",
-        "allele_type",
-        "status",
-        "in_coding",
-        "in_notdifficult",
-    ]
-    df = pd.read_parquet(path, columns=columns)
-    team_chr19 = df[
-        (df["chrom"] == "chr19")
-        & (df["allele_type"] == "ALT")
-        & (df["status"] == "SOMATIC")
-    ].copy()
-    return team_chr19
+def convert_to_single_indel_format(ref: str, alt: str) -> Tuple[str, str]:
+    """Convert REF/ALT pair so exactly one sequence is 1bp (anchor + indel)."""
+    anchor = ref[0]
+    if len(alt) > len(ref):
+        inserted_length = len(alt) - len(ref)
+        inserted_bases = alt[1:1 + inserted_length]
+        return anchor, anchor + inserted_bases
+    if len(alt) < len(ref):
+        deleted_length = len(ref) - len(alt)
+        deleted_bases = ref[1:1 + deleted_length]
+        return anchor + deleted_bases, anchor
+    return ref, alt
 
 
 def format_title(title: str) -> str:
@@ -109,19 +77,81 @@ CHROM_ORDER.update({"chrx": 23, "chry": 24, "chrm": 25, "chrmt": 25})
 def chromosome_sort_key(label: str) -> Tuple[int, int, str]:
     """
     Provide a sortable key to ensure chromosomes appear in natural order.
-    Returns tuple (group, rank, original_label) so unknown labels fall back to lexical order.
     """
     original = str(label)
     normalized = original.lower()
     if normalized in CHROM_ORDER:
         return (0, CHROM_ORDER[normalized], original)
 
-    # Handle inputs that look like numbers with or without chr prefix.
     stripped = normalized.lstrip("chr")
     if stripped.isdigit():
         return (1, int(stripped), original)
 
     return (2, float("inf"), original)
+
+
+def load_dataset(path: Path) -> pd.DataFrame:
+    columns = [
+        "chrom",
+        "pos",
+        "allele_seq",
+        "allele_type",
+        "status",
+        "in_coding",
+        "in_notdifficult",
+        "near_germ",
+    ]
+    df = pd.read_parquet(path, columns=columns)
+
+    # Map each position to its REF sequence (drop duplicates if any).
+    ref_df = (
+        df[df["allele_type"] == "REF"]
+        .assign(key=lambda d: list(zip(d["chrom"], d["pos"])))
+        .drop_duplicates("key")
+    )
+    ref_map = ref_df.set_index("key")["allele_seq"]
+
+    somatic_alt = df[
+        (df["allele_type"] == "ALT") & (df["status"] == "SOMATIC")
+    ].copy()
+    somatic_alt["key"] = list(zip(somatic_alt["chrom"], somatic_alt["pos"]))
+    somatic_alt["ref_seq"] = somatic_alt["key"].map(ref_map)
+
+    missing_ref = somatic_alt["ref_seq"].isna()
+    if missing_ref.any():
+        missing_positions = (
+            somatic_alt.loc[missing_ref, ["chrom", "pos"]]
+            .drop_duplicates()
+            .to_records(index=False)
+        )
+        raise ValueError(
+            f"Missing REF sequence for positions: {list(missing_positions)}"
+        )
+
+    def normalize(row: pd.Series) -> Tuple[str, str]:
+        ref_seq = row["ref_seq"]
+        alt_seq = row["allele_seq"]
+        if len(ref_seq) == 1 or len(alt_seq) == 1:
+            return ref_seq, alt_seq
+        return convert_to_single_indel_format(ref_seq, alt_seq)
+
+    converted = somatic_alt.apply(normalize, axis=1)
+    somatic_alt["converted_ref"] = [pair[0] for pair in converted]
+    somatic_alt["converted_alt"] = [pair[1] for pair in converted]
+
+    somatic_alt["ref_len"] = somatic_alt["converted_ref"].str.len()
+    somatic_alt["alt_len"] = somatic_alt["converted_alt"].str.len()
+    somatic_alt["indel_size"] = (somatic_alt["alt_len"] - somatic_alt["ref_len"]).abs()
+    somatic_alt = somatic_alt[somatic_alt["indel_size"] > 0].copy()
+
+    somatic_alt["indel_type"] = np.where(
+        somatic_alt["alt_len"] > somatic_alt["ref_len"],
+        "insertion",
+        "deletion",
+    )
+
+    somatic_alt = somatic_alt.drop(columns=["key", "ref_len", "alt_len"])
+    return somatic_alt
 
 
 def indel_length_distribution(df: pd.DataFrame) -> pd.Series:
@@ -148,7 +178,6 @@ def per_base_rates(df: pd.DataFrame) -> pd.DataFrame:
                 "unique_positions",
                 "span_bp",
                 "rate_per_base_total",
-                "rate_per_base_unique",
             ]
         )
 
@@ -199,14 +228,8 @@ def per_base_rates(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
-def print_section(title: str, items: Iterable[str]) -> None:
-    print(format_title(title))
-    for item in items:
-        print(item)
-    print()
-
 class DualWriter:
-    """Mirror writes to stdout and in-memory buffer for later file output."""
+    """Mirror writes to stdout and an in-memory buffer."""
 
     def __init__(self) -> None:
         self.buffer = io.StringIO()
@@ -225,8 +248,6 @@ def summarize_subset(name: str, df: pd.DataFrame, writer: DualWriter) -> Tuple[p
     writer.write(format_title(f"{name.upper()} SUMMARY"))
     writer.write(f"Total calls: {total_calls:,}")
     writer.write(f"Unique positions: {unique_positions:,}")
-    indel_types = sorted(df["indel_type"].unique()) if total_calls else []
-    writer.write(f"Indel types: {indel_types}")
     writer.write("")
 
     length_dist = indel_length_distribution(df)
@@ -342,54 +363,10 @@ def plot_per_base_rates(name: str, rates: pd.DataFrame, output_dir: Path) -> Pat
     return filename
 
 
-def plot_chr19_position_distribution(
-    position_map: Dict[str, pd.Series],
-    output_dir: Path,
-    suffix: str,
-    bin_size: int = 200_000,
-) -> Path:
-    """Plot chr19 indel densities using fixed-width bins for each series provided."""
-
-    valid_series = {
-        label: series.dropna().astype(int)
-        for label, series in position_map.items()
-        if not series.empty
-    }
-
-    if len(valid_series) == 0:
-        return None
-
-    min_pos = min(series.min() for series in valid_series.values())
-    max_pos = max(series.max() for series in valid_series.values())
-
-    bins = np.arange(min_pos, max_pos + bin_size, bin_size)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    for label, series in valid_series.items():
-        counts, _ = np.histogram(series, bins=bins)
-        ax.plot(bin_centers / 1e6, counts, label=label)
-
-    ax.set_title(
-        f"chr19 Indel Density ({suffix.replace('_', ' ')}; bin width = {bin_size/1000:.0f} kb)"
-    )
-    ax.set_xlabel("chr19 position (Mb)")
-    ax.set_ylabel("Indel count per bin")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    filename = output_dir / f"chr19_indel_density_{suffix}.png"
-    fig.savefig(filename)
-    plt.close(fig)
-    return filename
-
-
 def main() -> None:
     args = parse_args()
     parquet_path = args.parquet_path
     output_dir = args.output_dir
-    team_parquet_path = args.team_parquet_path
 
     if not parquet_path.exists():
         raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
@@ -400,7 +377,10 @@ def main() -> None:
 
     writer.write(f"Loading {parquet_path} ...")
     df = load_dataset(parquet_path)
-    writer.write(f"Loaded {len(df):,} rows")
+    if args.exclude_near_germ:
+        df = df[df["near_germ"] == False].copy()  # noqa: E712
+        writer.write("Applied filter: near_germ == False")
+    writer.write(f"Loaded {len(df):,} somatic ALT rows")
     writer.write("")
 
     subsets: Dict[str, pd.DataFrame] = {
@@ -423,46 +403,7 @@ def main() -> None:
         if chart:
             generated_charts.append(chart)
 
-    # Optional chr19 comparison plots if Team data available
-    if team_parquet_path and team_parquet_path.exists():
-        team_chr19_df = load_team_chr19_data(team_parquet_path)
-        dv_chr19_df = df[df["chrom"] == "chr19"]
-
-        if not dv_chr19_df.empty and not team_chr19_df.empty:
-            charts_to_generate = {
-                "all": {
-                    "DeepVariant indels": dv_chr19_df["pos"],
-                    "Team B somatic indels": team_chr19_df["pos"],
-                },
-                "coding": {
-                    "DeepVariant indels": dv_chr19_df[dv_chr19_df["in_coding"]]["pos"],
-                    "Team B somatic indels": team_chr19_df[team_chr19_df["in_coding"]]["pos"],
-                },
-                "not_difficult": {
-                    "DeepVariant indels": dv_chr19_df[dv_chr19_df["in_notdifficult"]]["pos"],
-                    "Team B somatic indels": team_chr19_df[team_chr19_df["in_notdifficult"]]["pos"],
-                },
-            }
-
-            for suffix, series_map in charts_to_generate.items():
-                if all(not series.empty for series in series_map.values()):
-                    chr19_chart = plot_chr19_position_distribution(
-                        series_map,
-                        output_dir,
-                        suffix,
-                    )
-                    if chr19_chart:
-                        generated_charts.append(chr19_chart)
-                else:
-                    print(
-                        f"Skipping chr19 {suffix} comparison plot (insufficient data for one or both datasets)."
-                    )
-        else:
-            print("Skipping chr19 comparison plots (chr19 data missing).")
-    else:
-        print("Skipping chr19 comparison plots (Team parquet not found).")
-
-    summary_path = output_dir / f"{parquet_path.stem}_summary.txt"
+    summary_path = output_dir / f"{parquet_path.stem}_somatic_summary.txt"
     summary_path.write_text(writer.contents())
 
     print(f"Summary written to {summary_path}")

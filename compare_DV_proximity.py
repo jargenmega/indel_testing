@@ -34,13 +34,13 @@ class Tee:
 
 # Configuration
 TEAM_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/results/Oct15"
-TEAM_SAMPLE_FILE = "sample1_indels_only.parquet"
+TEAM_SAMPLE_FILE = "sample2_indels_only.parquet"
 DV_DATA_DIR = "/home/ubuntu/data/teamb_indel-caller/deep_variant"
-DV_SAMPLE_FILE = "GTEx-sample1.indels.parquet"
+DV_SAMPLE_FILE = "GTEx-sample2.indels.parquet"
 OUTPUT_DIR = "/home/ubuntu/data/indel_comparison_results"
 
 # Output file prefix - set to descriptive name like "s1_all", "s1_coding", "s2_all", etc.
-OUTPUT_PREFIX = "s1_all_bedfix"  # Example: "s1_all" will create files like "s1_all_compare_DV_proximity_log_20251024_123456.txt"
+OUTPUT_PREFIX = "s2_all"  # Example: "s1_all" will create files like "s1_all_compare_DV_proximity_log_20251024_123456.txt"
 
 # Proximity window for matching (in base pairs)
 PROXIMITY_WINDOW = 10  # Will check for DV indels within +/- 10bp of Team B position
